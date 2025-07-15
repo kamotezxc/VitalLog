@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;600&display=swap" rel="stylesheet">
+  <title>VitalLog - Task Schedule</title>
+  <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-database.js"></script>
+  <style>
+    body {
+      font-family: 'Poppins', sans-serif;
+      background: #f4f6f9;
+      padding: 30px;
+      margin: 0;
+    }
+    h2 {
+      color: #2c3e50;
+      margin-bottom: 20px;
+    }
+    label {
+      margin-right: 5px;
+    }
+    select, input {
+      padding: 8px;
+      margin: 5px;
+      border: 1px solid #ccc;
+      border-radius: 6px;
+    }
+    button {
+      padding: 8px 12px;
+      margin: 5px;
+      background-color: #3498db;
+      color: white;
+      border: none;
+      border-radius: 6px;
+      cursor: pointer;
+      transition: background-color 0.3s;
+    }
+    button:hover {
+      background-color: #2980b9;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 20px;
+      background: white;
+      box-shadow: 0 4px 10px rgba(0,0,0,0.05);
+      border-radius: 10px;
+      overflow: hidden;
+    }
+    th, td {
+      padding: 12px;
+      border: 1px solid #ddd;
+      text-align: center;
+    }
+    th {
+      background: #2ecc71;
+      color: white;
+    }
+  </style>
+</head>
+<body>
+  <h2>Task Schedule</h2>
+
+  <label>Patient:</label>
+  <select id="patientSelect"></select>
+
+  <label>Time:</label>
+  <input type="time" id="taskTime">
+
+  <label>Task:</label>
+  <input type="text" id="taskDesc">
+
+  <label>Date (YYYY-MM-DD):</label>
+  <input type="date" id="taskDate">
+
+  <button onclick="addOrUpdateTask()">Save</button>
+  <button onclick="clearAllTasks()">Clear All Tasks</button>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Patient</th><th>Time</th><th>Task</th><th>Date</th><th>Actions</th>
+      </tr>
+    </thead>
+    <tbody id="scheduleTable"></tbody>
+  </table>
+
+<script>
+const firebaseConfig = {
+  apiKey: "AIzaSyBA6kRzMvdGDRda2GIvrD7o4t3tiiN5K9k",
+  authDomain: "vitallog-82100.firebaseapp.com",
+  databaseURL: "https://vitallog-82100-default-rtdb.asia-southeast1.firebasedatabase.app",
+  projectId: "vitallog-82100",
+  storageBucket: "vitallog-82100.appspot.com",
+  messagingSenderId: "801087593766",
+  appId: "1:801087593766:web:5d0ea4c3d98e53caedb5e7"
+};
+
+firebase.initializeApp(firebaseConfig);
+const db = firebase.database();
+
+const scheduleTable = document.getElementById("scheduleTable");
+const patientSelect = document.getElementById("patientSelect");
+const taskTime = document.getElementById("taskTime");
+const taskDesc = document.getElementById("taskDesc");
+const taskDate = document.getElementById("taskDate");
+
+function loadPatientsAndSchedule() {
+  db.ref("Patient_Profile").once("value").then(snap => {
+    const patients = snap.val() || {};
+    patientSelect.innerHTML = "";
+    for (let id in patients) {
+      const opt = document.createElement("option");
+      opt.value = id;
+      opt.textContent = patients[id].name;
+      patientSelect.appendChild(opt);
+    }
+
+    db.ref("Task_Schedule").once("value").then(scheduleSnap => {
+      const schedules = scheduleSnap.val() || {};
+      scheduleTable.innerHTML = "";
+
+      for (let pid in schedules) {
+        const patientName = patients[pid]?.name || pid;
+        const tasks = schedules[pid];
+        for (let time in tasks) {
+          const taskData = tasks[time];
+          const task = typeof taskData === 'string' ? taskData : taskData.task || "";
+          const date = typeof taskData === 'object' ? taskData.date || "" : "";
+          scheduleTable.innerHTML += `
+            <tr>
+              <td>${patientName}</td>
+              <td>${time}</td>
+              <td>${task}</td>
+              <td>${date}</td>
+              <td>
+                <button onclick="editTask('${pid}','${time}','${task}','${date}')">Edit</button>
+                <button onclick="deleteTask('${pid}','${time}')">Delete</button>
+              </td>
+            </tr>
+          `;
+        }
+      }
+    });
+  });
+}
+
+function addOrUpdateTask() {
+  const pid = patientSelect.value;
+  const time = taskTime.value;
+  const task = taskDesc.value;
+  const date = taskDate.value;
+
+  if (!pid || !time || !task || !date) {
+    alert("Please fill all fields including date.");
+    return;
+  }
+
+  const taskData = { task: task, date: date };
+  db.ref(`Task_Schedule/${pid}/${time}`).set(taskData).then(() => {
+    alert("Task saved!");
+    syncTaskLog(pid, time, task, date);
+    loadPatientsAndSchedule();
+    taskTime.value = "";
+    taskDesc.value = "";
+    taskDate.value = "";
+  });
+}
+
+function syncTaskLog(pid, time, task, date) {
+  const logKey = `${pid}_${time.replace(":", "")}_${date}`;
+
+  db.ref(`Patient_Profile/${pid}`).once("value").then(snap => {
+    const patient = snap.val();
+    if (!patient) return;
+
+    db.ref(`Task_Log/${logKey}`).update({
+      date: date,
+      time: time,
+      task: task,
+      patient_name: patient.name,
+      room: patient.room,
+      rfid_scanned: "No",
+      timestamp: null,
+      status: "Pending",
+      archived: false
+    });
+  });
+}
+
+function editTask(pid, time, task, date) {
+  patientSelect.value = pid;
+  taskTime.value = time;
+  taskDesc.value = task;
+  taskDate.value = date;
+}
+
+function deleteTask(pid, time) {
+  if (confirm("Delete this task?")) {
+    db.ref(`Task_Schedule/${pid}/${time}`).remove().then(() => {
+      alert("Task deleted.");
+      loadPatientsAndSchedule();
+    });
+  }
+}
+
+function clearAllTasks() {
+  if (confirm("Clear all tasks? Logs remain archived.")) {
+    db.ref("Task_Schedule").remove().then(() => {
+      archiveTodaysLogs();
+      loadPatientsAndSchedule();
+    });
+  }
+}
+
+function archiveTodaysLogs() {
+  const today = new Date().toISOString().split("T")[0];
+  db.ref("Task_Log").once("value").then(snap => {
+    const logs = snap.val();
+    const updates = {};
+    for (let key in logs) {
+      if (logs[key].date === today) {
+        updates[`Task_Log/${key}/archived`] = true;
+      }
+    }
+    db.ref().update(updates);
+  });
+}
+
+loadPatientsAndSchedule();
+</script>
+</body>
+</html>
