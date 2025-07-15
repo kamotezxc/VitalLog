@@ -1,0 +1,234 @@
+#include <WiFi.h>
+#include <SPI.h>
+#include <MFRC522.h>
+#include <Firebase_ESP_Client.h>
+#include "addons/TokenHelper.h"
+#include "addons/RTDBHelper.h"
+
+#define WIFI_SSID "as.h"
+#define WIFI_PASSWORD "12345678"
+#define API_KEY "AIzaSyBA6kRzMvdGDRda2GIvrD7o4t3tiiN5K9k"
+#define DATABASE_URL "https://vitallog-82100-default-rtdb.asia-southeast1.firebasedatabase.app/"
+#define USER_EMAIL "ashleyzxc123@gmail.com"
+#define USER_PASSWORD "weakmo123"
+
+#define RST_PIN 22
+#define SS_PIN 5
+#define SCK 18
+#define MISO 19
+#define MOSI 23
+#define BUZZER_PIN 4
+
+FirebaseData fbdo;
+FirebaseAuth auth;
+FirebaseConfig config;
+MFRC522 rfid(SS_PIN, RST_PIN);
+
+void connectToWiFi() {
+  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+  Serial.print("Connecting to WiFi");
+  while (WiFi.status() != WL_CONNECTED) {
+    Serial.print(".");
+    delay(500);
+  }
+  Serial.println(" Connected.");
+}
+
+String getUID() {
+  String uid = "";
+  for (byte i = 0; i < rfid.uid.size; i++) {
+    uid += String(rfid.uid.uidByte[i], HEX);
+  }
+  uid.toUpperCase();
+  return uid;
+}
+
+String getPatientIdFromUID(String scannedUID) {
+  if (Firebase.RTDB.get(&fbdo, "Patient_Profile")) {
+    FirebaseJson &json = fbdo.jsonObject();
+    int total = json.iteratorBegin();
+
+    for (int i = 0; i < total; i++) {
+      String key, value;
+      int type;
+      json.iteratorGet(i, type, key, value);
+      String rfidPath = "Patient_Profile/" + key + "/rfid_uid";
+      FirebaseData tempFbdo;
+
+      if (Firebase.RTDB.getString(&tempFbdo, rfidPath)) {
+        String foundUID = tempFbdo.stringData();
+        if (foundUID.equalsIgnoreCase(scannedUID)) {
+          json.iteratorEnd();
+          return key;
+        }
+      }
+    }
+    json.iteratorEnd();
+  }
+  return "";
+}
+
+String getTodayDate() {
+  struct tm timeinfo;
+  getLocalTime(&timeinfo);
+  char buf[11];
+  strftime(buf, sizeof(buf), "%Y-%m-%d", &timeinfo);
+  return String(buf);
+}
+
+String getTimestamp() {
+  struct tm timeinfo;
+  getLocalTime(&timeinfo);
+  char buf[20];
+  strftime(buf, sizeof(buf), "%Y-%m-%d %H:%M:%S", &timeinfo);
+  return String(buf);
+}
+
+String getCurrentTimeHHMM() {
+  struct tm timeinfo;
+  getLocalTime(&timeinfo);
+  char buf[6];
+  strftime(buf, sizeof(buf), "%H:%M", &timeinfo);
+  return String(buf);
+}
+
+int convertToMinutes(String timeStr) {
+  int sep = timeStr.indexOf(":");
+  return timeStr.substring(0, sep).toInt() * 60 + timeStr.substring(sep + 1).toInt();
+}
+
+void buzzOnTime() {
+  tone(BUZZER_PIN, 1200, 400); delay(450);
+  tone(BUZZER_PIN, 1800, 500); delay(600);
+}
+
+void buzzLate() {
+  tone(BUZZER_PIN, 300, 700); delay(800);
+  tone(BUZZER_PIN, 250, 700); delay(800);
+}
+
+void buzzTooEarly() {
+  tone(BUZZER_PIN, 2500, 400); delay(500);
+  tone(BUZZER_PIN, 2800, 500); delay(600);
+}
+
+void setup() {
+  Serial.begin(115200);
+  pinMode(BUZZER_PIN, OUTPUT);
+  connectToWiFi();
+  configTime(8 * 3600, 0, "pool.ntp.org", "time.nist.gov");
+
+  SPI.begin(SCK, MISO, MOSI, SS_PIN);
+  SPI.setFrequency(10000000);
+  rfid.PCD_Init();
+
+  config.api_key = API_KEY;
+  config.database_url = DATABASE_URL;
+  auth.user.email = USER_EMAIL;
+  auth.user.password = USER_PASSWORD;
+
+  Firebase.begin(&config, &auth);
+  Firebase.reconnectWiFi(true);
+
+  fbdo.setBSSLBufferSize(16384, 2048);
+  fbdo.setResponseSize(8192);
+  Firebase.setDoubleDigits(5);
+
+  Serial.println("System Ready.");
+}
+
+void loop() {
+  if (!Firebase.ready()) return;
+  if (!rfid.PICC_IsNewCardPresent() || !rfid.PICC_ReadCardSerial()) {
+    delay(100);
+    return;
+  }
+
+  String uid = getUID();
+  Serial.println("RFID Scanned: " + uid);
+
+  String patientId = getPatientIdFromUID(uid);
+  if (patientId == "") {
+    Serial.println("Unknown UID.");
+    return;
+  }
+
+  String today = getTodayDate();
+  String nowHHMM = getCurrentTimeHHMM();
+  String timestampNow = getTimestamp();
+
+  Firebase.RTDB.setString(&fbdo, "Current_Time/HHMM", nowHHMM);
+  Firebase.RTDB.setString(&fbdo, "Current_Time/Timestamp", timestampNow);
+
+  String schedulePath = "Task_Schedule/" + patientId;
+  if (!Firebase.RTDB.get(&fbdo, schedulePath)) {
+    Serial.println("Failed to get Task_Schedule.");
+    return;
+  }
+
+  FirebaseJson schedJson;
+  schedJson.setJsonData(fbdo.payload());
+
+  int count = schedJson.iteratorBegin();
+  String chosenTime = "";
+  bool found = false;
+
+  for (int i = 0; i < count; i++) {
+    String schedTime, task;
+    int type;
+    schedJson.iteratorGet(i, type, schedTime, task);
+
+    String logKey = patientId + "_" + schedTime;
+    logKey.replace(":", "");
+    logKey += "_" + today;
+    String logPath = "Task_Log/" + logKey;
+
+    FirebaseData logFbdo;
+    if (Firebase.RTDB.get(&logFbdo, logPath + "/rfid_scanned")) {
+      String scanned = logFbdo.stringData();
+      if (scanned != "Yes") {
+        chosenTime = schedTime;
+        found = true;
+        break;
+      }
+    } else {
+      Serial.println("No rfid_scanned entry. Task assumed unscanned.");
+      chosenTime = schedTime;
+      found = true;
+      break;
+    }
+  }
+
+  schedJson.iteratorEnd();
+
+  if (found) {
+    String logKey = patientId + "_" + chosenTime;
+    logKey.replace(":", "");
+    logKey += "_" + today;
+    String logPath = "Task_Log/" + logKey;
+
+    int diff = convertToMinutes(nowHHMM) - convertToMinutes(chosenTime);
+    String status = "On-Time";
+    if (diff > 10) status = "Late";
+    else if (diff < -10) status = "Too Early";
+
+    FirebaseJson update;
+    update.set("rfid_scanned", "Yes");
+    update.set("timestamp", timestampNow);
+    update.set("status", status);
+
+    if (Firebase.RTDB.updateNode(&fbdo, logPath, &update)) {
+      Serial.println("✅ Task updated: " + logPath + " | Status: " + status);
+      if (status == "On-Time") buzzOnTime();
+      else if (status == "Late") buzzLate();
+      else buzzTooEarly();
+    } else {
+      Serial.println("❌ Failed to update task.");
+    }
+  } else {
+    Serial.println("✅ All tasks already scanned.");
+  }
+
+  rfid.PICC_HaltA();
+  delay(2000);
+}
