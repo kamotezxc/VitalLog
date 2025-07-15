@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;600&display=swap" rel="stylesheet">
+
+  <title>VitalLog - Patient Profile</title>
+  <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-database.js"></script>
+ <style>
+  body {
+    font-family: 'Poppins', sans-serif;
+    background: #f4f6f9;
+    padding: 30px;
+    margin: 0;
+  }
+
+  h2 {
+    color: #2c3e50;
+    margin-bottom: 20px;
+  }
+
+  input {
+    padding: 10px;
+    margin: 5px;
+    border: 1px solid #ccc;
+    border-radius: 6px;
+    width: 200px;
+  }
+
+  button {
+    padding: 10px 15px;
+    margin: 5px;
+    background-color: #3498db;
+    color: white;
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: background-color 0.3s;
+  }
+
+  button:hover {
+    background-color: #2980b9;
+  }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 20px;
+    background: white;
+    box-shadow: 0 4px 10px rgba(0,0,0,0.05);
+    border-radius: 10px;
+    overflow: hidden;
+  }
+
+  th, td {
+    padding: 12px;
+    border: 1px solid #ddd;
+    text-align: center;
+  }
+
+  th {
+    background: #3498db;
+    color: white;
+  }
+</style>
+
+</head>
+<body>
+  <h2>Patient Profile</h2>
+
+  <input type="text" id="patientId" placeholder="Patient ID">
+  <input type="text" id="name" placeholder="Name">
+  <input type="number" id="age" placeholder="Age">
+  <input type="text" id="condition" placeholder="Condition">
+  <input type="text" id="rfid_uid" placeholder="RFID UID">
+  <input type="text" id="room" placeholder="Room">
+  <button onclick="addNewPatient()">Add New Patient</button>
+  <button onclick="updatePatient()">Update Patient</button>
+
+  <table>
+    <thead>
+      <tr>
+        <th>ID</th><th>Name</th><th>Age</th><th>Condition</th><th>RFID UID</th><th>Room</th><th>Actions</th>
+      </tr>
+    </thead>
+    <tbody id="patientTable"></tbody>
+  </table>
+
+<script>
+const firebaseConfig = {
+  apiKey: "AIzaSyBA6kRzMvdGDRda2GIvrD7o4t3tiiN5K9k",
+  authDomain: "vitallog-82100.firebaseapp.com",
+  databaseURL: "https://vitallog-82100-default-rtdb.asia-southeast1.firebasedatabase.app",
+  projectId: "vitallog-82100",
+  storageBucket: "vitallog-82100.appspot.com",
+  messagingSenderId: "801087593766",
+  appId: "1:801087593766:web:5d0ea4c3d98e53caedb5e7"
+};
+
+firebase.initializeApp(firebaseConfig);
+const db = firebase.database();
+
+const table = document.getElementById("patientTable");
+
+function loadPatients() {
+  db.ref("Patient_Profile").on("value", snap => {
+    const data = snap.val();
+    table.innerHTML = "";
+    for (let id in data) {
+      const p = data[id];
+      table.innerHTML += `
+        <tr>
+          <td>${id}</td><td>${p.name}</td><td>${p.age}</td>
+          <td>${p.condition}</td><td>${p.rfid_uid}</td><td>${p.room}</td>
+          <td>
+            <button onclick="fillForm('${id}')">Edit</button>
+            <button onclick="deletePatient('${id}')">Delete</button>
+          </td>
+        </tr>
+      `;
+    }
+  });
+}
+
+function addNewPatient() {
+  const id = document.getElementById("patientId").value.trim();
+  const name = document.getElementById("name").value;
+  const age = document.getElementById("age").value;
+  const condition = document.getElementById("condition").value;
+  const rfid_uid = document.getElementById("rfid_uid").value;
+  const room = document.getElementById("room").value;
+
+  if (!id || !name || !age || !condition || !rfid_uid || !room) {
+    alert("Complete all fields.");
+    return;
+  }
+
+  db.ref(`Patient_Profile/${id}`).once("value").then(snap => {
+    if (snap.exists()) {
+      alert("ID exists. Use Update.");
+    } else {
+      db.ref(`Patient_Profile/${id}`).set({ name, age, condition, rfid_uid, room }).then(() => {
+        alert("Patient added.");
+        clearForm();
+      });
+    }
+  });
+}
+
+function updatePatient() {
+  const id = document.getElementById("patientId").value.trim();
+  const name = document.getElementById("name").value;
+  const age = document.getElementById("age").value;
+  const condition = document.getElementById("condition").value;
+  const rfid_uid = document.getElementById("rfid_uid").value;
+  const room = document.getElementById("room").value;
+
+  if (!id || !name || !age || !condition || !rfid_uid || !room) {
+    alert("Complete all fields.");
+    return;
+  }
+
+  db.ref(`Patient_Profile/${id}`).set({ name, age, condition, rfid_uid, room }).then(() => {
+    alert("Patient updated.");
+    clearForm();
+    updateTaskLogsDetails(id, name, room);
+  });
+}
+
+function updateTaskLogsDetails(pid, name, room) {
+  db.ref("Task_Log").once("value").then(snap => {
+    const logs = snap.val();
+    const updates = {};
+
+    for (let key in logs) {
+      if (key.startsWith(pid + "_")) {
+        updates[`Task_Log/${key}/patient_name`] = name;
+        updates[`Task_Log/${key}/room`] = room;
+      }
+    }
+    if (Object.keys(updates).length) db.ref().update(updates);
+  });
+}
+
+function fillForm(id) {
+  db.ref(`Patient_Profile/${id}`).once("value").then(snap => {
+    const p = snap.val();
+    document.getElementById("patientId").value = id;
+    document.getElementById("name").value = p.name;
+    document.getElementById("age").value = p.age;
+    document.getElementById("condition").value = p.condition;
+    document.getElementById("rfid_uid").value = p.rfid_uid;
+    document.getElementById("room").value = p.room;
+  });
+}
+
+function deletePatient(id) {
+  if (confirm("Delete this patient?")) {
+    db.ref(`Patient_Profile/${id}`).remove().then(() => alert("Deleted."));
+  }
+}
+
+function clearForm() {
+  document.getElementById("patientId").value = "";
+  document.getElementById("name").value = "";
+  document.getElementById("age").value = "";
+  document.getElementById("condition").value = "";
+  document.getElementById("rfid_uid").value = "";
+  document.getElementById("room").value = "";
+}
+
+loadPatients();
+</script>
+</body>
+</html>
