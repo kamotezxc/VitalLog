@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;600&display=swap" rel="stylesheet">
+  <title>VitalLog - Task Log</title>
+  <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-database.js"></script>
+  <style>
+    body {
+      font-family: 'Poppins', sans-serif;
+      background: #f4f6f9;
+      padding: 30px;
+      margin: 0;
+    }
+
+    h2 {
+      color: #2c3e50;
+      margin-bottom: 20px;
+    }
+
+    label {
+      margin-right: 5px;
+    }
+
+    input[type="text"], input[type="date"] {
+      padding: 8px;
+      margin: 5px;
+      border: 1px solid #ccc;
+      border-radius: 6px;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 20px;
+      background: white;
+      box-shadow: 0 4px 10px rgba(0,0,0,0.05);
+      border-radius: 10px;
+      overflow: hidden;
+    }
+
+    th, td {
+      padding: 12px;
+      border: 1px solid #ddd;
+      text-align: center;
+    }
+
+    th {
+      background: #6c757d;
+      color: white;
+    }
+
+    .late {
+      color: red;
+      font-weight: bold;
+    }
+
+    .on-time {
+      color: green;
+      font-weight: bold;
+    }
+
+    .pending {
+      color: orange;
+      font-weight: bold;
+    }
+
+    button {
+      padding: 6px 12px;
+      margin: 3px;
+      background-color: #3498db;
+      color: white;
+      border: none;
+      border-radius: 6px;
+      cursor: pointer;
+      transition: background-color 0.3s;
+    }
+
+    button:hover {
+      background-color: #2980b9;
+    }
+  </style>
+</head>
+<body>
+  <h2>Task Log</h2>
+
+  <div id="filterSection">
+    <label>Search:</label>
+    <input type="text" id="searchInput" placeholder="Search by name, room, task">
+
+    <label>Date:</label>
+    <input type="date" id="dateFilter">
+
+    <label>
+      <input type="checkbox" id="archiveToggle"> Show Archived
+    </label>
+  </div>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Date</th>
+        <th>Time</th>
+        <th>Patient</th>
+        <th>Room</th>
+        <th>Task</th>
+        <th>RFID Scanned</th>
+        <th>Timestamp</th>
+        <th>Status</th>
+        <th>Actions</th>
+      </tr>
+    </thead>
+    <tbody id="logTable"></tbody>
+  </table>
+
+  <script>
+    const firebaseConfig = {
+      apiKey: "AIzaSyBA6kRzMvdGDRda2GIvrD7o4t3tiiN5K9k",
+      authDomain: "vitallog-82100.firebaseapp.com",
+      databaseURL: "https://vitallog-82100-default-rtdb.asia-southeast1.firebasedatabase.app",
+      projectId: "vitallog-82100",
+      storageBucket: "vitallog-82100.appspot.com",
+      messagingSenderId: "801087593766",
+      appId: "1:801087593766:web:5d0ea4c3d98e53caedb5e7"
+    };
+
+    firebase.initializeApp(firebaseConfig);
+    const db = firebase.database();
+    const table = document.getElementById("logTable");
+    const searchInput = document.getElementById("searchInput");
+    const dateFilter = document.getElementById("dateFilter");
+    const archiveToggle = document.getElementById("archiveToggle");
+
+    function loadLogs() {
+      db.ref("Task_Log").on("value", snapshot => {
+        const data = snapshot.val();
+        const search = searchInput.value.toLowerCase();
+        const selectedDate = dateFilter.value;
+        const showArchived = archiveToggle.checked;
+
+        table.innerHTML = "";
+
+        if (!data) return;
+
+        for (let logId in data) {
+          const entry = data[logId];
+          if (!entry) continue;
+
+          const matchesDate = selectedDate ? (entry.date === selectedDate) : true;
+          const matchesSearch = entry.patient_name?.toLowerCase().includes(search) ||
+                                entry.room?.toLowerCase().includes(search) ||
+                                entry.task?.toLowerCase().includes(search);
+          const isArchived = entry.archived === true;
+
+          if (matchesDate && matchesSearch && (showArchived || !isArchived)) {
+            const statusClass = entry.status === "On-Time" ? "on-time" :
+                                entry.status === "Late" ? "late" : "pending";
+            const timestamp = entry.timestamp ? new Date(entry.timestamp).toLocaleString() : "—";
+
+            table.innerHTML += `
+              <tr>
+                <td>${entry.date}</td>
+                <td>${entry.time}</td>
+                <td>${entry.patient_name}</td>
+                <td>${entry.room}</td>
+                <td>${entry.task}</td>
+                <td>${entry.rfid_scanned}</td>
+                <td>${timestamp}</td>
+                <td class="${statusClass}">${entry.status}</td>
+                <td>
+                  <button onclick="archiveLog('${logId}')">Archive</button>
+                  <button onclick="deleteLog('${logId}')">Delete</button>
+                </td>
+              </tr>
+            `;
+          }
+        }
+      });
+    }
+
+    function archiveLog(logId) {
+      if (confirm("Archive this log?")) {
+        db.ref(`Task_Log/${logId}/archived`).set(true);
+      }
+    }
+
+    function deleteLog(logId) {
+      if (confirm("Permanently delete this log?")) {
+        db.ref(`Task_Log/${logId}`).remove();
+      }
+    }
+
+    // Load only; do not generate
+    loadLogs();
+
+    searchInput.addEventListener("input", loadLogs);
+    dateFilter.addEventListener("change", loadLogs);
+    archiveToggle.addEventListener("change", loadLogs);
+  </script>
+</body>
+</html>
